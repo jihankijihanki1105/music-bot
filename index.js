@@ -17,36 +17,42 @@ const client = new Client({
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
-  // 正規表現を少し広めに設定（共有用URLなども拾えるように）
-  const regex = /(https?:\/\/(open\.spotify\.com|music\.apple\.com|song\.link)\/[^\s]+)/;
+  const regex = /(https?:\/\/(open\.spotify\.com|music\.apple\.com)\/[^\s]+)/;
   const match = message.content.match(regex);
 
   if (match) {
     const musicUrl = match[0];
     try {
-      // APIリクエスト（userCountry=JPを明示し、エラーハンド答を詳細化）
+      // APIリクエスト
       const res = await axios.get(`https://api.song.link/v1-alpha.1/links?url=${encodeURIComponent(musicUrl)}&userCountry=JP`);
       const data = res.data;
 
-      // データの取得先を安全にチェック
-      const spotify = data.linksByPlatform?.spotify?.url;
-      const apple = data.linksByPlatform?.appleMusic?.url;
+      let spotify = data.linksByPlatform?.spotify?.url;
+      let apple = data.linksByPlatform?.appleMusic?.url;
 
-      // 両方見つからない場合はスルー（関係ないURLへの誤爆防止）
+      // --- 強化ポイント：もしURLが見つからない場合、タイトルで再検索を試みる ---
+      if (!spotify || !apple) {
+        const title = data.entitiesByUniqueId[data.entityUniqueId]?.title;
+        const artist = data.entitiesByUniqueId[data.entityUniqueId]?.artistName;
+        
+        if (title && artist) {
+          // タイトルとアーティスト名でOdesliに再照会（これで引っかかる場合があります）
+          const searchQuery = encodeURIComponent(`${title} ${artist}`);
+          const searchRes = await axios.get(`https://api.song.link/v1-alpha.1/links?url=https://song.link/search?query=${searchQuery}&userCountry=JP`);
+          
+          if (!spotify) spotify = searchRes.data.linksByPlatform?.spotify?.url;
+          if (!apple) apple = searchRes.data.linksByPlatform?.appleMusic?.url;
+        }
+      }
+
       if (!spotify && !apple) return;
 
-      // メッセージ作成
-      let response = `🎵 **Music Links**\n`;
-      response += `🍎 Apple Music: ${apple || "見つかりませんでした"}\n`;
-      response += `🟢 Spotify: ${spotify || "見つかりませんでした"}`;
-
-      // 片方が「未登録」でも、もう片方があれば表示
       message.reply({
-        content: response,
+        content: `🎵 **Music Links Found**\n🍎 Apple Music: ${apple || "⚠️ 見つかりませんでした"}\n🟢 Spotify: ${spotify || "⚠️ 見つかりませんでした"}\n*(新曲の場合、紐付けに数日かかることがあります)*`,
         allowedMentions: { repliedUser: false }
       });
     } catch (e) {
-      console.error('API Error:', e.message);
+      console.error('API Error');
     }
   }
 });
