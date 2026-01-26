@@ -45,6 +45,7 @@ client.on('messageCreate', async (message) => {
 
       if (!spotify && !apple) return;
 
+      // 文言を削除し、リンクのみのシンプルな構成に変更
       let response = `🍎 Apple Music: ${apple || "未登録"}\n🟢 Spotify: ${spotify || "未登録"}`;
 
       message.reply({
