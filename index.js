@@ -23,20 +23,18 @@ client.on('messageCreate', async (message) => {
   if (match) {
     const musicUrl = match[0];
     try {
-      // APIリクエスト
       const res = await axios.get(`https://api.song.link/v1-alpha.1/links?url=${encodeURIComponent(musicUrl)}&userCountry=JP`);
       const data = res.data;
 
       let spotify = data.linksByPlatform?.spotify?.url;
       let apple = data.linksByPlatform?.appleMusic?.url;
 
-      // --- 強化ポイント：もしURLが見つからない場合、タイトルで再検索を試みる ---
+      // URLが見つからない場合の再検索ロジック
       if (!spotify || !apple) {
         const title = data.entitiesByUniqueId[data.entityUniqueId]?.title;
         const artist = data.entitiesByUniqueId[data.entityUniqueId]?.artistName;
         
         if (title && artist) {
-          // タイトルとアーティスト名でOdesliに再照会（これで引っかかる場合があります）
           const searchQuery = encodeURIComponent(`${title} ${artist}`);
           const searchRes = await axios.get(`https://api.song.link/v1-alpha.1/links?url=https://song.link/search?query=${searchQuery}&userCountry=JP`);
           
@@ -47,8 +45,10 @@ client.on('messageCreate', async (message) => {
 
       if (!spotify && !apple) return;
 
+      let response = `🍎 Apple Music: ${apple || "未登録"}\n🟢 Spotify: ${spotify || "未登録"}`;
+
       message.reply({
-        content: `🎵 **Music Links Found**\n🍎 Apple Music: ${apple || "⚠️ 見つかりませんでした"}\n🟢 Spotify: ${spotify || "⚠️ 見つかりませんでした"}\n*(新曲の場合、紐付けに数日かかることがあります)*`,
+        content: response,
         allowedMentions: { repliedUser: false }
       });
     } catch (e) {
