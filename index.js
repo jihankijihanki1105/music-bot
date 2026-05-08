@@ -8,7 +8,9 @@ const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
 });
 
-client.once('ready', () => { console.log(`🚀 厳密検索モード稼働中： ${client.user.tag}`); });
+const processedUrls = new Set();
+
+client.once('ready', () => { console.log(`🚀 URL解析強化版稼働中： ${client.user.tag}`); });
 
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
@@ -18,6 +20,11 @@ client.on('messageCreate', async (message) => {
 
     if (match) {
         const inputUrl = match[0];
+
+        if (processedUrls.has(inputUrl)) return;
+        processedUrls.add(inputUrl);
+        setTimeout(() => processedUrls.delete(inputUrl), 5000);
+
         try {
             await message.react('👀');
 
@@ -27,12 +34,17 @@ client.on('messageCreate', async (message) => {
             if (inputUrl.includes('apple.com')) {
                 // 【Apple Music → Spotify】
                 appleUrl = inputUrl;
-                const appleIdMatch = inputUrl.match(/id[p|i]?=?([0-9]+)/);
-                if (appleIdMatch) {
-                    const itunesSearch = await axios.get(`https://itunes.apple.com/lookup?id=${appleIdMatch[1]}&country=jp`);
+                
+                // URLからIDを抽出するロジックを強化
+                // 「/i=」の後ろの数字、または「/id」の後ろの数字を探す
+                const idMatch = inputUrl.match(/[\/=](?:id)?([0-9]+)(?:\?i=([0-9]+))?/);
+                const appleId = idMatch ? (idMatch[2] || idMatch[1]) : null;
+
+                if (appleId) {
+                    const itunesSearch = await axios.get(`https://itunes.apple.com/lookup?id=${appleId}&country=jp`);
                     if (itunesSearch.data.resultCount > 0) {
                         const track = itunesSearch.data.results[0];
-                        // 曲名とアーティスト名を組み合わせてSpotify検索URLを生成（精度UP）
+                        // Spotify検索リンクを「曲名 + アーティスト名」で確実に生成
                         const query = `${track.trackName} ${track.artistName}`;
                         spotifyUrl = `https://open.spotify.com/search/${encodeURIComponent(query)}`;
                     }
@@ -44,19 +56,13 @@ client.on('messageCreate', async (message) => {
                 const spotifyRes = await axios.get(embedUrl);
                 
                 if (spotifyRes.data && spotifyRes.data.title) {
-                    // SpotifyのoEmbedから "曲名 by アーティスト名" を取得
-                    const rawTitle = spotifyRes.data.title; // 例: "Dive to Blue by アイマリン"
-                    const parts = rawTitle.split(' by ');
-                    const trackName = parts[0];
-                    const artistName = parts[1];
-
-                    // iTunes APIで検索（精度を上げるためにアーティスト名も含める）
-                    const itunesSearch = await axios.get(`https://itunes.apple.com/search?term=${encodeURIComponent(rawTitle)}&country=jp&limit=5&entity=song`);
+                    const rawTitle = spotifyRes.data.title; 
+                    const itunesSearch = await axios.get(`https://itunes.apple.com/search?term=${encodeURIComponent(rawTitle)}&country=jp&limit=10&entity=song`);
                     
                     if (itunesSearch.data.resultCount > 0) {
-                        // 検索結果の中から、アーティスト名が一致するものを探す（誤爆防止）
+                        const artistKey = rawTitle.includes(' by ') ? rawTitle.split(' by ')[1] : "";
                         const bestMatch = itunesSearch.data.results.find(res => 
-                            res.artistName.includes(artistName) || artistName.includes(res.artistName)
+                            artistKey && (res.artistName.includes(artistKey) || artistKey.includes(res.artistName))
                         ) || itunesSearch.data.results[0];
                         
                         appleUrl = bestMatch.trackViewUrl;
@@ -64,10 +70,8 @@ client.on('messageCreate', async (message) => {
                 }
             }
 
-            // 元の埋め込みを削除
             await message.suppressEmbeds(true).catch(() => null);
 
-            // 指定形式で返信
             await message.reply({
                 content: `Apple Music：${appleUrl}\nSpotify：${spotifyUrl}`,
                 allowedMentions: { repliedUser: false }
@@ -75,7 +79,6 @@ client.on('messageCreate', async (message) => {
 
         } catch (error) {
             console.error('Error:', error.message);
-            await message.reply(`Apple Music：見つかりませんでした\nSpotify：見つかりませんでした`).catch(() => null);
         } finally {
             const reaction = message.reactions.cache.get('👀');
             if (reaction) await reaction.users.remove(client.user.id).catch(() => null);
