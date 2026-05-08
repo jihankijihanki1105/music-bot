@@ -1,34 +1,18 @@
 const { Client, GatewayIntentBits } = require('discord.js');
-const express = require('express');
+const http = require('http');
 
-// Renderを維持するための最小限のサーバー
-const app = express();
-app.get('/', (req, res) => res.send('Bot is Live'));
-app.listen(process.env.PORT || 10000);
+// Renderの起動を維持するためだけの最小サーバー
+http.createServer((req, res) => res.end('Alive')).listen(process.env.PORT || 10000);
 
-// 必要最低限の権限のみ指定
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
-  ]
-});
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-// ログインできたら絶対にログを出す
+console.log("--- 診断開始 ---");
+console.log("トークンの文字数:", process.env.DISCORD_TOKEN ? process.env.DISCORD_TOKEN.length : "0 (未設定)");
+
 client.once('ready', () => {
-  console.log('------------------------------');
-  console.log(`🚀 ログイン成功: ${client.user.tag}`);
-  console.log('------------------------------');
+  console.log(`✅ 成功！ログインしました: ${client.user.tag}`);
 });
 
-// エラーが起きたら即座にログを出す
-process.on('unhandledRejection', error => {
-  console.error('❌ 致命的なエラー:', error);
-});
-
-// ログイン実行
-console.log('Connecting to Discord...');
 client.login(process.env.DISCORD_TOKEN).catch(err => {
-  console.error('❌ ログインに失敗しました:', err.message);
+  console.log(`❌ 失敗: ${err.message}`);
 });
