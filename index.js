@@ -1,8 +1,7 @@
 const { Client, GatewayIntentBits } = require('discord.js');
 const http = require('http');
-const axios = require('axios'); // リンク解析用に必要です
+const axios = require('axios');
 
-// Render維持用
 http.createServer((req, res) => { res.end('Alive'); }).listen(process.env.PORT || 10000);
 
 const client = new Client({
@@ -14,7 +13,7 @@ const client = new Client({
 });
 
 client.once('ready', () => {
-    console.log(`🚀 準備完了！ ${client.user.tag} で動作中`);
+    console.log(`🚀 準備完了！ ${client.user.tag}`);
 });
 
 client.on('messageCreate', async (message) => {
@@ -25,41 +24,55 @@ client.on('messageCreate', async (message) => {
 
     if (match) {
         const inputUrl = match[0];
-        
         try {
-            // 1. 検索中リアクションを付ける
             await message.react('👀');
 
-            // 2. Songwhip APIを使ってリンク情報を取得
-            const response = await axios.post('https://songwhip.com/api/get', { url: inputUrl });
+            // Songwhip APIへのリクエスト (ヘッダーを追加して安定性を向上)
+            const response = await axios.post('https://songwhip.com/api/get', 
+                { url: inputUrl },
+                { 
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                    }
+                }
+            );
+
             const data = response.data;
 
+            // データの存在チェック
             if (!data || !data.links) {
-                throw new Error('No links found');
+                return message.reply('🔍 楽曲データは見つかりましたが、配信サイトのリンクが取得できませんでした。');
             }
 
-            // 3. Apple MusicとSpotifyのリンクを抽出
-            const spotify = data.links.spotify ? data.links.spotify[0].link : '見つかりませんでした';
-            const apple = data.links.itunes ? data.links.itunes[0].link : '見つかりませんでした';
+            // リンクの抽出 (?. を使ってエラーを防ぐ)
+            const spotify = data.links.spotify?.[0]?.link || '配信なし';
+            const apple = data.links.itunes?.[0]?.link || '配信なし';
 
-            // 4. 元の埋め込みを消す（メッセージから埋め込み機能を外す）
-            await message.suppressEmbeds(true);
+            // 両方見つからない場合
+            if (spotify === '配信なし' && apple === '配信なし') {
+                return message.reply('❌ 対応するSpotify/Apple Musicのリンクが見つかりませんでした。');
+            }
 
-            // 5. テキスト形式で返信
+            // 元の埋め込みを削除
+            try {
+                await message.suppressEmbeds(true);
+            } catch (e) {
+                console.log("埋め込み削除失敗（権限不足など）");
+            }
+
+            // 返信
             await message.reply({
                 content: `🍎 **Apple Music：** ${apple}\n🎧 **Spotify：** ${spotify}`,
                 allowedMentions: { repliedUser: false }
             });
 
         } catch (error) {
-            console.error(error);
-            await message.reply('❌ リンクの解析に失敗しました。対応していない楽曲か、一時的なエラーです。');
+            console.error('API Error:', error.response?.data || error.message);
+            await message.reply('❌ 解析に失敗しました。Songwhipが混み合っているか、未登録の楽曲です。');
         } finally {
-            // リアクションを消す（または完了マークに変える）
-            const userReactions = message.reactions.cache.filter(reaction => reaction.users.cache.has(client.user.id));
-            for (const reaction of userReactions.values()) {
-                await reaction.users.remove(client.user.id);
-            }
+            const reaction = message.reactions.cache.get('👀');
+            if (reaction) await reaction.users.remove(client.user.id).catch(() => null);
         }
     }
 });
