@@ -8,13 +8,12 @@ const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
 });
 
-client.once('ready', () => { console.log(`🚀 稼働開始： ${client.user.tag}`); });
+client.once('ready', () => { console.log(`🚀 相互変換モード稼働中： ${client.user.tag}`); });
 
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
-    // URL検知（Spotify, Apple Music, YouTube Music）
-    const musicRegex = /https?:\/\/(open\.spotify\.com|music\.apple\.com|music\.youtube\.com)\/\S+/i;
+    const musicRegex = /https?:\/\/(open\.spotify\.com|music\.apple\.com)\/\S+/i;
     const match = message.content.match(musicRegex);
 
     if (match) {
@@ -24,33 +23,41 @@ client.on('messageCreate', async (message) => {
 
             let appleUrl = '見つかりませんでした';
             let spotifyUrl = '見つかりませんでした';
+            let searchTerms = "";
 
-            // 1. まずは入力されたURLがどこのものか判別して保持
-            if (inputUrl.includes('apple.com')) appleUrl = inputUrl;
-            if (inputUrl.includes('spotify.com')) spotifyUrl = inputUrl;
+            if (inputUrl.includes('apple.com')) {
+                // 【Apple Music → Spotify】
+                appleUrl = inputUrl;
+                const itunesSearch = await axios.get(`https://itunes.apple.com/lookup?url=${encodeURIComponent(inputUrl)}&country=jp`);
+                if (itunesSearch.data.resultCount > 0) {
+                    const track = itunesSearch.data.results[0];
+                    searchTerms = `${track.trackName} ${track.artistName}`;
+                    // SpotifyはUPC検索URLで直リンクに近い精度を出す
+                    spotifyUrl = track.upc ? `https://open.spotify.com/search/upc:${track.upc}` : `https://open.spotify.com/search/${encodeURIComponent(searchTerms)}`;
+                }
+            } else if (inputUrl.includes('spotify.com')) {
+                // 【Spotify → Apple Music】
+                spotifyUrl = inputUrl;
+                // Spotifyのページから曲名を抽出（API認証なしで情報を取るための工夫）
+                const res = await axios.get(inputUrl);
+                const titleMatch = res.data.match(/<title>(.*?)<\/title>/i);
+                if (titleMatch) {
+                    // 「曲名 - アーティスト名 - song by...」のようなタイトルから検索ワードを作成
+                    searchTerms = titleMatch[1].split('|')[0].split(' - Spotify')[0].trim();
+                }
 
-            // 2. iTunes API (Apple公式) を使って検索
-            // これにより、Spotifyリンクが貼られた時にApple Musicリンクを探せます
-            const itunesSearch = await axios.get(`https://itunes.apple.com/search?term=${encodeURIComponent(inputUrl)}&country=jp&limit=1`);
-            
-            if (itunesSearch.data.resultCount > 0) {
-                const track = itunesSearch.data.results[0];
-                if (appleUrl === '見つかりませんでした') appleUrl = track.trackViewUrl || track.collectionViewUrl;
-                
-                // Spotifyが見つからない場合、曲名とアーティスト名でSpotifyの検索リンクを生成
-                if (spotifyUrl === '見つかりませんでした') {
-                    const query = encodeURIComponent(`${track.trackName} ${track.artistName}`);
-                    spotifyUrl = `https://open.spotify.com/search/${query}`;
+                if (searchTerms) {
+                    const itunesSearch = await axios.get(`https://itunes.apple.com/search?term=${encodeURIComponent(searchTerms)}&country=jp&limit=1&entity=song`);
+                    if (itunesSearch.data.resultCount > 0) {
+                        appleUrl = itunesSearch.data.results[0].trackViewUrl;
+                    }
                 }
             }
 
-            // 万が一どちらも不明な場合の最終バックアップ（検索URL化）
-            if (appleUrl === '見つかりませんでした') appleUrl = `https://music.apple.com/jp/search?term=${encodeURIComponent(inputUrl)}`;
-
-            // 3. 元の埋め込みを削除
+            // 元の埋め込みを削除
             await message.suppressEmbeds(true).catch(() => null);
 
-            // 4. 指定形式で返信
+            // 指定形式で返信
             await message.reply({
                 content: `Apple Music：${appleUrl}\nSpotify：${spotifyUrl}`,
                 allowedMentions: { repliedUser: false }
