@@ -3,7 +3,7 @@ const axios = require('axios');
 const express = require('express');
 
 const app = express();
-app.get('/', (req, res) => res.send('Bot is running!'));
+app.get('/', (req, res) => res.send('Bot is online!'));
 app.listen(process.env.PORT || 3000);
 
 const client = new Client({
@@ -13,44 +13,39 @@ const client = new Client({
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
-  const regex = /(https?:\/\/(open\.spotify\.com|music\.apple\.com)\/[^\s]+)/;
-  const match = message.content.match(regex);
+  const appleRegex = /https?:\/\/music\.apple\.com\/[^\s]+/;
+  const spotifyRegex = /https?:\/\/open\.spotify\.com\/track\/[^\s?]+/;
 
-  if (match) {
-    const inputUrl = match[0];
+  // 1. Apple Music → Spotify の変換
+  if (appleRegex.test(message.content)) {
+    const url = message.content.match(appleRegex)[0];
     try {
-      // 1. まずはメインの Odesli API を試す
-      const res = await axios.get(`https://api.song.link/v1-alpha.1/links?url=${encodeURIComponent(inputUrl)}&userCountry=JP`);
-      const data = res.data;
+      // iTunes APIでメタデータを取得 (登録不要)
+      const itunesRes = await axios.get(`https://itunes.apple.com/lookup?url=${encodeURIComponent(url)}&country=jp`);
+      if (itunesRes.data.results.length > 0) {
+        const item = itunesRes.data.results[0];
+        const query = `${item.trackName} ${item.artistName}`;
+        
+        // 検索用リンクを生成 (song.linkの検索画面へ飛ばすことで確実に表示させる)
+        const spotifySearchUrl = `https://open.spotify.com/search/${encodeURIComponent(query)}`;
+        const fallbackUrl = `https://song.link/s/${item.trackId || "search"}`;
 
-      let spotify = data.linksByPlatform?.spotify?.url;
-      let apple = data.linksByPlatform?.appleMusic?.url;
-
-      // 2. もし Spotify が見つからなかった場合、iTunes API 経由で再検索
-      if (!spotify && inputUrl.includes('apple.com')) {
-        console.log('Searching via iTunes/Metadata backup...');
-        const entityId = data.entityUniqueId;
-        const title = data.entitiesByUniqueId[entityId]?.title;
-        const artist = data.entitiesByUniqueId[entityId]?.artistName;
-
-        if (title && artist) {
-          // 曲名とアーティスト名で再度 Odesli に検索をかける
-          const searchQuery = `https://api.song.link/v1-alpha.1/links?url=https://song.link/search?query=${encodeURIComponent(title + " " + artist)}&userCountry=JP`;
-          const searchRes = await axios.get(searchQuery);
-          spotify = searchRes.data.linksByPlatform?.spotify?.url;
-        }
+        message.reply(`🎵 **Apple Musicから変換**\n🟢 Spotifyで探す: ${spotifySearchUrl}\n🔗 各種配信サイト: ${fallbackUrl}`);
       }
+    } catch (e) { console.error("Apple Conversion Error"); }
+  }
 
-      // 3. レスポンス送信
-      if (spotify || apple) {
-        message.reply({
-          content: `🎵 **リンクが見つかりました**\n🍎 Apple Music: ${apple || "⚠️ 見つかりませんでした"}\n🟢 Spotify: ${spotify || "⚠️ 見つかりませんでした"}\n*(Odesli APIの遅延により表示されない場合があります)*`,
-          allowedMentions: { repliedUser: false }
-        });
+  // 2. Spotify → Apple Music の変換
+  if (spotifyRegex.test(message.content)) {
+    const url = message.content.match(spotifyRegex)[0];
+    const odesliUrl = `https://api.song.link/v1-alpha.1/links?url=${encodeURIComponent(url)}&userCountry=JP`;
+    try {
+      const res = await axios.get(odesliUrl);
+      const appleUrl = res.data.linksByPlatform?.appleMusic?.url;
+      if (appleUrl) {
+        message.reply(`🎵 **Spotifyから変換**\n🍎 Apple Music: ${appleUrl}`);
       }
-    } catch (e) {
-      console.error('API Error:', e.message);
-    }
+    } catch (e) { console.error("Spotify Conversion Error"); }
   }
 });
 
