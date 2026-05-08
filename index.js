@@ -8,7 +8,7 @@ const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
 });
 
-client.once('ready', () => { console.log(`🚀 相互変換(修正版)稼働中： ${client.user.tag}`); });
+client.once('ready', () => { console.log(`🚀 厳密検索モード稼働中： ${client.user.tag}`); });
 
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
@@ -23,7 +23,6 @@ client.on('messageCreate', async (message) => {
 
             let appleUrl = '見つかりませんでした';
             let spotifyUrl = '見つかりませんでした';
-            let searchTerms = "";
 
             if (inputUrl.includes('apple.com')) {
                 // 【Apple Music → Spotify】
@@ -33,32 +32,34 @@ client.on('messageCreate', async (message) => {
                     const itunesSearch = await axios.get(`https://itunes.apple.com/lookup?id=${appleIdMatch[1]}&country=jp`);
                     if (itunesSearch.data.resultCount > 0) {
                         const track = itunesSearch.data.results[0];
-                        searchTerms = `${track.trackName} ${track.artistName}`;
-                        spotifyUrl = `https://open.spotify.com/search/${encodeURIComponent(searchTerms)}`;
+                        // 曲名とアーティスト名を組み合わせてSpotify検索URLを生成（精度UP）
+                        const query = `${track.trackName} ${track.artistName}`;
+                        spotifyUrl = `https://open.spotify.com/search/${encodeURIComponent(query)}`;
                     }
                 }
             } else if (inputUrl.includes('spotify.com')) {
                 // 【Spotify → Apple Music】
                 spotifyUrl = inputUrl;
-                
-                // SpotifyのメタデータをAPIなしで取得できるツールを利用して曲名を特定
                 const embedUrl = `https://open.spotify.com/oembed?url=${inputUrl}`;
-                try {
-                    const spotifyRes = await axios.get(embedUrl);
-                    if (spotifyRes.data && spotifyRes.data.title) {
-                        // "TrackName by ArtistName" の形式で返ってくるのでこれを使う
-                        searchTerms = spotifyRes.data.title;
-                    }
-                } catch (e) {
-                    // oembedがダメな場合はURLから情報を推測（最終手段）
-                    console.log("oembed failed, using fallback search");
-                }
+                const spotifyRes = await axios.get(embedUrl);
+                
+                if (spotifyRes.data && spotifyRes.data.title) {
+                    // SpotifyのoEmbedから "曲名 by アーティスト名" を取得
+                    const rawTitle = spotifyRes.data.title; // 例: "Dive to Blue by アイマリン"
+                    const parts = rawTitle.split(' by ');
+                    const trackName = parts[0];
+                    const artistName = parts[1];
 
-                if (searchTerms) {
-                    // iTunes APIで楽曲を検索
-                    const itunesSearch = await axios.get(`https://itunes.apple.com/search?term=${encodeURIComponent(searchTerms)}&country=jp&limit=1&entity=song`);
+                    // iTunes APIで検索（精度を上げるためにアーティスト名も含める）
+                    const itunesSearch = await axios.get(`https://itunes.apple.com/search?term=${encodeURIComponent(rawTitle)}&country=jp&limit=5&entity=song`);
+                    
                     if (itunesSearch.data.resultCount > 0) {
-                        appleUrl = itunesSearch.data.results[0].trackViewUrl;
+                        // 検索結果の中から、アーティスト名が一致するものを探す（誤爆防止）
+                        const bestMatch = itunesSearch.data.results.find(res => 
+                            res.artistName.includes(artistName) || artistName.includes(res.artistName)
+                        ) || itunesSearch.data.results[0];
+                        
+                        appleUrl = bestMatch.trackViewUrl;
                     }
                 }
             }
