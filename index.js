@@ -2,52 +2,61 @@ const { Client, GatewayIntentBits } = require('discord.js');
 const axios = require('axios');
 const express = require('express');
 
-// ↓この3行がRenderで動かすために必要です
 const app = express();
-app.get('/', (req, res) => res.send('Bot is online!'));
-app.listen(process.env.PORT || 10000); // ログに出ている 10000 番に合わせます
+app.get('/', (req, res) => res.send('Bot is running!'));
+// Renderの要求するポート番号に対応させます
+const port = process.env.PORT || 10000;
+app.listen(port, () => console.log(`✅ Web Server listening on port ${port}`));
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ]
+});
+
+// ログイン成功時にログを出す
+client.on('ready', () => {
+  console.log(`✅✅✅ Discordログイン成功！ Bot名: ${client.user.tag}`);
 });
 
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
-  const appleRegex = /https?:\/\/music\.apple\.com\/[^\s]+/;
-  const spotifyRegex = /https?:\/\/open\.spotify\.com\/track\/[^\s?]+/;
+  const regex = /(https?:\/\/(open\.spotify\.com|music\.apple\.com)\/[^\s]+)/;
+  const match = message.content.match(regex);
 
-  // 1. Apple Music → Spotify の変換
-  if (appleRegex.test(message.content)) {
-    const url = message.content.match(appleRegex)[0];
+  if (match) {
+    const musicUrl = match[0];
     try {
-      // iTunes APIでメタデータを取得 (登録不要)
-      const itunesRes = await axios.get(`https://itunes.apple.com/lookup?url=${encodeURIComponent(url)}&country=jp`);
-      if (itunesRes.data.results.length > 0) {
-        const item = itunesRes.data.results[0];
-        const query = `${item.trackName} ${item.artistName}`;
-        
-        // 検索用リンクを生成 (song.linkの検索画面へ飛ばすことで確実に表示させる)
-        const spotifySearchUrl = `https://open.spotify.com/search/${encodeURIComponent(query)}`;
-        const fallbackUrl = `https://song.link/s/${item.trackId || "search"}`;
+      const res = await axios.get(`https://api.song.link/v1-alpha.1/links?url=${encodeURIComponent(musicUrl)}&userCountry=JP`);
+      const spotify = res.data.linksByPlatform?.spotify?.url;
+      const apple = res.data.linksByPlatform?.appleMusic?.url;
 
-        message.reply(`🎵 **Apple Musicから変換**\n🟢 Spotifyで探す: ${spotifySearchUrl}\n🔗 各種配信サイト: ${fallbackUrl}`);
-      }
-    } catch (e) { console.error("Apple Conversion Error"); }
-  }
+      if (!spotify && !apple) return;
 
-  // 2. Spotify → Apple Music の変換
-  if (spotifyRegex.test(message.content)) {
-    const url = message.content.match(spotifyRegex)[0];
-    const odesliUrl = `https://api.song.link/v1-alpha.1/links?url=${encodeURIComponent(url)}&userCountry=JP`;
-    try {
-      const res = await axios.get(odesliUrl);
-      const appleUrl = res.data.linksByPlatform?.appleMusic?.url;
-      if (appleUrl) {
-        message.reply(`🎵 **Spotifyから変換**\n🍎 Apple Music: ${appleUrl}`);
-      }
-    } catch (e) { console.error("Spotify Conversion Error"); }
+      message.reply({
+        content: `🎵 **Music Links Found**\n🍎 Apple Music: ${apple || "⚠️ 見つかりませんでした"}\n🟢 Spotify: ${spotify || "⚠️ 見つかりませんでした"}`,
+        allowedMentions: { repliedUser: false }
+      });
+    } catch (e) {
+      console.error('API Error');
+    }
   }
 });
 
-client.login(process.env.DISCORD_TOKEN);
+// ログインエラーをログに出すための設定
+process.on('unhandledRejection', error => {
+  console.error('❌ ログインエラー発生:', error.message);
+});
+
+// トークンが空っぽでないかチェックしてからログイン
+if (!process.env.DISCORD_TOKEN) {
+  console.error('❌ DISCORD_TOKEN が設定されていません！');
+} else {
+  console.log('⏳ Discordにログインを試みています...');
+  client.login(process.env.DISCORD_TOKEN).catch(err => {
+    console.error('❌ ログイン失敗:', err.message);
+  });
+}
