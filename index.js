@@ -2,7 +2,11 @@ const { Client, GatewayIntentBits } = require('discord.js');
 const http = require('http');
 const axios = require('axios');
 
-http.createServer((req, res) => { res.end('Stable Mode'); }).listen(process.env.PORT || 10000);
+// サーバー維持用：外部からのアクセスを待ち受ける
+http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('Bot is Alive');
+}).listen(process.env.PORT || 10000);
 
 const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
