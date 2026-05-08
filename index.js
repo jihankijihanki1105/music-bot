@@ -2,9 +2,10 @@ const { Client, GatewayIntentBits } = require('discord.js');
 const axios = require('axios');
 const express = require('express');
 
+// ↓この3行がRenderで動かすために必要です
 const app = express();
 app.get('/', (req, res) => res.send('Bot is online!'));
-app.listen(process.env.PORT || 3000);
+app.listen(process.env.PORT || 10000); // ログに出ている 10000 番に合わせます
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
