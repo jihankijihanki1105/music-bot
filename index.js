@@ -8,23 +8,24 @@ const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
 });
 
-const processedUrls = new Set();
+// 重複実行を「メッセージID」で物理的に止める
+const processedMessages = new Set();
 
-client.once('ready', () => { console.log(`🚀 最終修正版(検索強化)： ${client.user.tag}`); });
+client.once('ready', () => { console.log(`🚀 鉄壁モード稼働開始： ${client.user.tag}`); });
 
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
-    // Spotify(intl-ja対応) & Apple Music
     const musicRegex = /https?:\/\/(?:open\.spotify\.com|music\.apple\.com)\/\S+/i;
     const match = message.content.match(musicRegex);
 
     if (match) {
-        const inputUrl = match[0];
-        if (processedUrls.has(inputUrl)) return;
-        processedUrls.add(inputUrl);
-        setTimeout(() => processedUrls.delete(inputUrl), 5000);
+        // 同じメッセージには1回しか反応させない
+        if (processedMessages.has(message.id)) return;
+        processedMessages.add(message.id);
+        setTimeout(() => processedMessages.delete(message.id), 10000);
 
+        const inputUrl = match[0];
         try {
             await message.react('👀');
 
@@ -41,34 +42,38 @@ client.on('messageCreate', async (message) => {
                     const res = await axios.get(`https://itunes.apple.com/lookup?id=${appleId}&country=jp`);
                     if (res.data.resultCount > 0) {
                         const track = res.data.results[0];
-                        // 検索精度を最大にするため「"アーティスト名" 曲名」でSpotify検索URLを作る
-                        const query = `"${track.artistName}" ${track.trackName}`;
-                        spotifyUrl = `https://open.spotify.com/search/${encodeURIComponent(query)}`;
+                        // Spotify検索URL（アーティスト名を最優先）
+                        spotifyUrl = `https://open.spotify.com/search/${encodeURIComponent(track.artistName + " " + track.trackName)}`;
                     }
                 }
             } else {
                 // 【Spotify → Apple Music】
                 spotifyUrl = inputUrl;
-                // oEmbedを使ってメタデータを取得
                 const oembedUrl = `https://open.spotify.com/oembed?url=${encodeURIComponent(inputUrl)}`;
                 const spotifyRes = await axios.get(oembedUrl);
                 
                 if (spotifyRes.data && spotifyRes.data.title) {
                     const rawTitle = spotifyRes.data.title; // "Dive to Blue by アイマリン"
-                    
-                    // 「"アーティスト名" "曲名"」でAppleに完全一致検索を投げる (誤爆防止の肝)
-                    const searchTerms = rawTitle.includes(' by ') 
-                        ? `"${rawTitle.split(' by ')[1]}" "${rawTitle.split(' by ')[0]}"`
-                        : rawTitle;
+                    const parts = rawTitle.split(' by ');
+                    const targetArtist = parts[1] ? parts[1].trim() : "";
 
-                    const itunesRes = await axios.get(`https://itunes.apple.com/search?term=${encodeURIComponent(searchTerms)}&country=jp&limit=1&entity=song`);
+                    // iTunes APIで15件取得して、Bot側で「アーティスト名」を厳密チェック
+                    const itunesRes = await axios.get(`https://itunes.apple.com/search?term=${encodeURIComponent(rawTitle)}&country=jp&limit=15&entity=song`);
                     
                     if (itunesRes.data.resultCount > 0) {
-                        appleUrl = itunesRes.data.results[0].trackViewUrl;
-                    } else {
-                        // ヒットしなかった場合、少し条件を緩めて再検索
-                        const retryRes = await axios.get(`https://itunes.apple.com/search?term=${encodeURIComponent(rawTitle)}&country=jp&limit=1&entity=song`);
-                        if (retryRes.data.resultCount > 0) appleUrl = retryRes.data.results[0].trackViewUrl;
+                        // ここで「ラルク」を徹底排除。取得した15件の中からアーティスト名が一致するものだけを探す
+                        const bestMatch = itunesRes.data.results.find(res => {
+                            const apiArtist = res.artistName.toLowerCase();
+                            const userArtist = targetArtist.toLowerCase();
+                            // アーティスト名が「含まれている」または「含んでいる」か厳密に判定
+                            return apiArtist.includes(userArtist) || userArtist.includes(apiArtist);
+                        });
+
+                        if (bestMatch) {
+                            appleUrl = bestMatch.trackViewUrl;
+                        } else {
+                            appleUrl = '見つかりませんでした（アーティストが一致しません）';
+                        }
                     }
                 }
             }
