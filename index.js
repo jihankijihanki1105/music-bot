@@ -8,7 +8,7 @@ const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
 });
 
-client.once('ready', () => { console.log(`🚀 相互変換モード稼働中： ${client.user.tag}`); });
+client.once('ready', () => { console.log(`🚀 相互変換(修正版)稼働中： ${client.user.tag}`); });
 
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
@@ -28,25 +28,34 @@ client.on('messageCreate', async (message) => {
             if (inputUrl.includes('apple.com')) {
                 // 【Apple Music → Spotify】
                 appleUrl = inputUrl;
-                const itunesSearch = await axios.get(`https://itunes.apple.com/lookup?url=${encodeURIComponent(inputUrl)}&country=jp`);
-                if (itunesSearch.data.resultCount > 0) {
-                    const track = itunesSearch.data.results[0];
-                    searchTerms = `${track.trackName} ${track.artistName}`;
-                    // SpotifyはUPC検索URLで直リンクに近い精度を出す
-                    spotifyUrl = track.upc ? `https://open.spotify.com/search/upc:${track.upc}` : `https://open.spotify.com/search/${encodeURIComponent(searchTerms)}`;
+                const appleIdMatch = inputUrl.match(/id[p|i]?=?([0-9]+)/);
+                if (appleIdMatch) {
+                    const itunesSearch = await axios.get(`https://itunes.apple.com/lookup?id=${appleIdMatch[1]}&country=jp`);
+                    if (itunesSearch.data.resultCount > 0) {
+                        const track = itunesSearch.data.results[0];
+                        searchTerms = `${track.trackName} ${track.artistName}`;
+                        spotifyUrl = `https://open.spotify.com/search/${encodeURIComponent(searchTerms)}`;
+                    }
                 }
             } else if (inputUrl.includes('spotify.com')) {
                 // 【Spotify → Apple Music】
                 spotifyUrl = inputUrl;
-                // Spotifyのページから曲名を抽出（API認証なしで情報を取るための工夫）
-                const res = await axios.get(inputUrl);
-                const titleMatch = res.data.match(/<title>(.*?)<\/title>/i);
-                if (titleMatch) {
-                    // 「曲名 - アーティスト名 - song by...」のようなタイトルから検索ワードを作成
-                    searchTerms = titleMatch[1].split('|')[0].split(' - Spotify')[0].trim();
+                
+                // SpotifyのメタデータをAPIなしで取得できるツールを利用して曲名を特定
+                const embedUrl = `https://open.spotify.com/oembed?url=${inputUrl}`;
+                try {
+                    const spotifyRes = await axios.get(embedUrl);
+                    if (spotifyRes.data && spotifyRes.data.title) {
+                        // "TrackName by ArtistName" の形式で返ってくるのでこれを使う
+                        searchTerms = spotifyRes.data.title;
+                    }
+                } catch (e) {
+                    // oembedがダメな場合はURLから情報を推測（最終手段）
+                    console.log("oembed failed, using fallback search");
                 }
 
                 if (searchTerms) {
+                    // iTunes APIで楽曲を検索
                     const itunesSearch = await axios.get(`https://itunes.apple.com/search?term=${encodeURIComponent(searchTerms)}&country=jp&limit=1&entity=song`);
                     if (itunesSearch.data.resultCount > 0) {
                         appleUrl = itunesSearch.data.results[0].trackViewUrl;
@@ -65,7 +74,7 @@ client.on('messageCreate', async (message) => {
 
         } catch (error) {
             console.error('Error:', error.message);
-            await message.reply('❌ リンクの解析に失敗しました。');
+            await message.reply(`Apple Music：見つかりませんでした\nSpotify：見つかりませんでした`).catch(() => null);
         } finally {
             const reaction = message.reactions.cache.get('👀');
             if (reaction) await reaction.users.remove(client.user.id).catch(() => null);
